@@ -2,6 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 import lxml
 import pandas as pd
+import gspread
 import re
 from datetime import datetime
 
@@ -36,17 +37,14 @@ headers = {
 }
 
 
-# url = requests.get('https://baza-knig.top/fantastika-fenteze/')
-# print(url)
-
 def main():
     page = 1
-    max_page = 3
+    max_page = 1
     data = []
-    
+
+    like = []
     while page <= max_page:
-        
-        link = (f"https://baza-knig.top/fantastika-fenteze/page/{page}/")
+        link = f"https://baza-knig.top/fantastika-fenteze/page/{page}/"
 
         respons = requests.get(link, headers=headers)
         respons.encoding = "utf-8"  # устанввливаем кодировку.
@@ -57,33 +55,44 @@ def main():
         # Находим все div блоке с короткой информ на странице..
         books = block.find_all("div", class_="short")
 
-        
         for book in books:
             book_data = {}
             # Извлекаем заголовок книги и названия
             title = book.find("div", class_="short-title").text.strip()
             book_data["Название"] = title
-            
+
+            # Извлекаем Автор.Чтитает.Жанр.
             for li in book.find("ul", class_="reset short-items").find_all("li"):
                 parts = li.text.strip().split(":", 1)  # Делим по первому вхождению ":
                 if len(parts) == 2:
                     key, value = parts
                     book_data[key] = value
+            
+            # Извлекаем likes dislikes И обновляем словарь 
+            for item in book.find("div", class_="short-bottom").find_all("div", class_="comments"):
+                book_data.update({
+                    "likes": item.text,
+                    "dis": item.text
+                })
+             
             data.append(book_data)
+            
         page += 1
-        
-    # # Удаление ненужныз символов.
+
+    # # Удаление ненужныз символов через re.sub.
     patterns = {r"Фантастика": "Фан", r"фэнтези": "фэн", r",": "/", r" ": ""}
 
     for item in data:
-        genre = item["Жанр"]
+        elem = item["Жанр"]
         for pattern, replacement in patterns.items():
-            genre = re.sub(pattern, replacement, genre, flags=re.IGNORECASE)
-        item["Жанр"] = genre
-    
-    # pandas 
+            elem = re.sub(pattern, replacement, elem, flags=re.IGNORECASE)
+        item["Жанр"] = elem
+    print(data[1])
+
+    # pandas таблица
     df = pd.DataFrame(data)
     df["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
     return len(data)
 
 
