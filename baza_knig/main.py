@@ -1,6 +1,5 @@
 import requests
 from bs4 import BeautifulSoup
-import lxml
 import pandas as pd
 import gspread
 import re
@@ -39,10 +38,9 @@ headers = {
 
 def main():
     page = 1
-    max_page = 1
+    max_page = 2
     data = []
 
-    like = []
     while page <= max_page:
         link = f"https://baza-knig.top/fantastika-fenteze/page/{page}/"
 
@@ -50,33 +48,46 @@ def main():
         respons.encoding = "utf-8"  # устанввливаем кодировку.
 
         soup = BeautifulSoup(respons.text, "lxml")
-        block = soup.find("div", id="dle-content")
+        content = soup.find("div", id="dle-content")
 
-        # Находим все div блоке с короткой информ на странице..
-        books = block.find_all("div", class_="short")
+        for short in content.find_all("div", class_="short"):
+            book_data = {
+                "Название": " - ",
+                "Автор": " - ",
+                "Читает": " - ",
+                "Длительность": " - ",
+                "Цикл": " - ",
+                "Жанр": " - ",
+                "Добавлена": " - ",
+                "likes": None,
+                "dis": None,
+            }
 
-        for book in books:
-            book_data = {}
             # Извлекаем заголовок книги и названия
-            title = book.find("div", class_="short-title").text.strip()
-            book_data["Название"] = title
+            title_bock = short.find("div", class_="short-title")
+            if title_bock:
+                book_data["Название"] = title_bock.get_text(strip=True)
 
-            # Извлекаем Автор.Чтитает.Жанр.
-            for li in book.find("ul", class_="reset short-items").find_all("li"):
-                parts = li.text.strip().split(":", 1)  # Делим по первому вхождению ":
-                if len(parts) == 2:
-                    key, value = parts
-                    book_data[key] = value
-            
-            # Извлекаем likes dislikes И обновляем словарь 
-            for item in book.find("div", class_="short-bottom").find_all("div", class_="comments"):
-                book_data.update({
-                    "likes": item.text,
-                    "dis": item.text
-                })
-             
+            # Извлекаем Автор.Чтитает.Жанр....
+            info_ul = short.find("ul", class_="reset short-items")
+            if info_ul:
+                for li in info_ul.find_all("li"):
+                    # Делим по первому вхождению ":
+                    parts = li.get_text(strip=True).split(":", 1)
+                    if len(parts) == 2:
+                        key, value = parts
+                        book_data[key] = value
+
+            # Извлекаем likes dislikes И обновляем словарь
+            bottom = short.find("div", class_="short-bottom")
+            btn = []
+            for item in bottom.find_all("div", class_="comments"):
+                btn.append(item.get_text(strip=True))
+            book_data["likes"] = btn[0]
+            book_data["dis"] = btn[1]
+
             data.append(book_data)
-            
+
         page += 1
 
     # # Удаление ненужныз символов через re.sub.
@@ -87,14 +98,27 @@ def main():
         for pattern, replacement in patterns.items():
             elem = re.sub(pattern, replacement, elem, flags=re.IGNORECASE)
         item["Жанр"] = elem
-    print(data[1])
 
     # pandas таблица
-    df = pd.DataFrame(data)
+    df = pd.DataFrame(data).fillna(" - ")
     df["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    return len(data)
+
+    return df
 
 
 if __name__ == "__main__":
-    print(main())
+    df = main()
+
+    # Подключение service_account
+    gc = gspread.service_account(filename="config_key.json")
+    wks = gc.open("web_parsing_baza_knig").sheet1
+    wks.update([df.columns.values.tolist()] + df.values.tolist())
+
+    # Update a range of cells using the top left corner address
+    # wks.update([[1, 2], [3, 4]], 'A1')
+
+    # Or update a single cell
+    # wks.update_acell('B42', "it's down there somewhere, let me take another look.")
+
+    # Format the header
+    # wks.format('A1:B1', {'textFormat': {'bold': True}})
