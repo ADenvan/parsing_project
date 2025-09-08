@@ -4,6 +4,7 @@ import pandas as pd
 import gspread
 import re
 from datetime import datetime
+import pprint
 
 cookies = {
     "PHPSESSID": "6b0pk15p1i0nd3fumnlc49f8br",
@@ -35,13 +36,22 @@ headers = {
     # 'Cookie': 'PHPSESSID=6b0pk15p1i0nd3fumnlc49f8br; _ga_04BJ8LCPGH=deleted; _ga=GA1.1.1871535938.1755674660; fid=d69d87d6-fa85-44bd-bc7e-15b5531d1edd; _ym_d=1755674662; _ym_uid=1755674662823662447; _ym_isad=1; _ac_oid=f496ab89b7e3accc91562ec83d0c766f%3A1755896256103; _ym_visorc=b; _ga_04BJ8LCPGH=GS2.1.s1755949410$o11$g1$t1755951154$j60$l0$h0',
 }
 
+    
+def gspread_row():
+    gc = gspread.service_account(filename="config_gkey.json")
+    wks = gc.open("web_parsing_baza_knig").sheet1
+    
+    first_row = wks.row_values(2)
+    return first_row[0:3]
 
 def main():
     page = 1
-    max_page = 2
+    # max_page = 13
     data = []
-
-    while page <= max_page:
+    row_gspread = gspread_row()
+    stop = True
+    # while page <= max_page:
+    while stop:
         link = f"https://baza-knig.top/fantastika-fenteze/page/{page}/"
 
         respons = requests.get(link, headers=headers)
@@ -86,39 +96,68 @@ def main():
             book_data["likes"] = btn[0]
             book_data["dis"] = btn[1]
 
+            
             data.append(book_data)
-
+                
+            patterns = {r"Фантастика": "Фан", r"фэнтези": "фэн", r",": "-", r" ": ""}
+            for item in data:
+                elem = item["Жанр"]
+                for pattern, replacement in patterns.items():
+                    elem = re.sub(pattern, replacement, elem, flags=re.IGNORECASE)
+                item["Жанр"] = elem
+        
+        for i in range(len(data)):
+            if set(list(data[i].values())[0:3]) == set(row_gspread):
+                stop = False
+                print("ok: While stop")
+                break 
+                
+        pprint(f"page: {page}")
         page += 1
-
-    # # Удаление ненужныз символов через re.sub.
-    patterns = {r"Фантастика": "Фан", r"фэнтези": "фэн", r",": "/", r" ": ""}
-
-    for item in data:
-        elem = item["Жанр"]
-        for pattern, replacement in patterns.items():
-            elem = re.sub(pattern, replacement, elem, flags=re.IGNORECASE)
-        item["Жанр"] = elem
-
-    # pandas таблица
-    df = pd.DataFrame(data).fillna(" - ")
-    df["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
+    
+    result = []
+    for i in range(len(data)):
+        elem = list(data[i].values())[0:3]
+        if set(elem) == set(row_gspread):
+            print(elem)
+            break
+        result.append(data[i])
+        
+    if len(result) == 0:
+        return False
+   
+    df = pd.DataFrame(result)
     return df
+    
 
+def set_df(data):
+    # Заменяем NaN/None на пустые строки
+    df = pd.DataFrame(data).fillna("")
+    df['timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Авторизация
+    gc = gspread.service_account(filename="config_gkey.json")
+    wks = gc.open("web_parsing_baza_knig").sheet1
+    
+    # Преобразуем DataFrame в список списков
+    rows = df.values.tolist()
+    assert all(isinstance(r, list) for r in rows)
+    n_rows, n_cols = df.shape
+    
+    # Вставляем пустые строки правильной ширины
+    wks.insert_rows([[""] * n_cols] * n_rows, row=2)
+    
+    # Обновляем заголовки
+    header = df.columns.tolist()
+    wks.update("A1", [header])
+    
+    # Записываем DataFrame сразу после заголовков
+    wks.update("A2", rows)
 
 if __name__ == "__main__":
-    df = main()
+    result_main = main()
+    print(result_main)
 
-    # Подключение service_account
-    gc = gspread.service_account(filename="config_key.json")
-    wks = gc.open("web_parsing_baza_knig").sheet1
-    wks.update([df.columns.values.tolist()] + df.values.tolist())
-
-    # Update a range of cells using the top left corner address
-    # wks.update([[1, 2], [3, 4]], 'A1')
-
-    # Or update a single cell
-    # wks.update_acell('B42', "it's down there somewhere, let me take another look.")
-
-    # Format the header
-    # wks.format('A1:B1', {'textFormat': {'bold': True}})
+    # set_df(result_main)
+    # result_main.to_json("main_json_2.json", orient="records", force_ascii=False, indent=4)
+ 
